@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Recolección en la Oscuridad</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #000;
+            color: white;
+            font-family: Arial, sans-serif;
+            touch-action: none;
+        }
+        canvas {
+            display: block;
+        }
+        #ui {
+            position: absolute;
+            top: 15px;
+            left: 15px;
+            font-size: 24px;
+            font-weight: bold;
+            z-index: 10;
+            pointer-events: none;
+        }
+        .pantalla-fin {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: none;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 20;
+        }
+        #pantallaInicio { background: #050505; color: white; display: flex; z-index: 30; }
+        #gameOver { background: #8B0000; color: black; }
+        #gameWin { background: #004400; color: white; }
+        .pantalla-fin h1 {
+            font-size: 48px;
+            margin: 0 0 20px 0;
+            text-transform: uppercase;
+            text-align: center;
+        }
+        button {
+            padding: 15px 40px;
+            font-size: 20px;
+            font-weight: bold;
+            cursor: pointer;
+            border: none;
+            background: black;
+            color: white;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.5);
+        }
+        #btnEmpezar {
+            background: #00FFFF;
+            color: black;
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="ui">Núcleos: <span id="score">0</span> / 15</div>
+
+    <div id="pantallaInicio" class="pantalla-fin">
+        <h1>LA OSCURIDAD</h1>
+        <p style="font-size: 18px; color: #aaa;">Usa audífonos para una mejor experiencia</p>
+        <button id="btnEmpezar">Tocar para Jugar</button>
+    </div>
+    
+    <div id="gameOver" class="pantalla-fin">
+        <h1>TE ATRAPÓ</h1>
+        <button onclick="reiniciarJuego()">Intentar de nuevo</button>
+    </div>
+
+    <div id="gameWin" class="pantalla-fin">
+        <h1>¡SOBREVIVISTE!</h1>
+        <p style="font-size: 20px; margin-bottom: 20px;">Recolectaste los 15 núcleos.</p>
+        <button onclick="reiniciarJuego()">Jugar de nuevo</button>
+    </div>
+
+    <canvas id="gameCanvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById("gameCanvas");
+        const ctx = canvas.getContext("2d");
+        const scoreElement = document.getElementById("score");
+        const gameOverScreen = document.getElementById("gameOver");
+        const gameWinScreen = document.getElementById("gameWin");
+        const pantallaInicio = document.getElementById("pantallaInicio");
+
+        let width, height;
+        let animationId;
+        let partidaActiva = true;
+        let juegoIniciado = false;
+        let score = 0;
+
+        let linternaInterior = 30;
+        let linternaExterior = 140;
+
+        const imgJugador = new Image();
+        imgJugador.src = 'jugador.png';
+
+        const imgEnemigo = new Image();
+        imgEnemigo.src = 'monstruo.png'; 
+
+        // Variables de audio estándar
+        const audioEnemigo = new Audio('audio.ogg');
+        audioEnemigo.loop = true;
+        const audioSusto = new Audio('susto.mp3'); 
+
+        // Variables del Web Audio API (Para móviles)
+        let audioCtx;
+        let gainNode;
+        let fuenteConectada = false;
+
+        const player = { x: 0, y: 0, radius: 20, speed: 4, targetX: 0, targetY: 0 };
+        const enemy = { x: 0, y: 0, radius: 25, baseSpeed: 1.5, speed: 1.5 };
+        const item = { x: 0, y: 0, radius: 10 };
+
+        function redimensionarCanvas() {
+            width = window.innerWidth;
+            height = window.innerHeight;
+            canvas.width = width;
+            canvas.height = height;
+
+            if (width > 768) {
+                player.radius = 40;
+                enemy.radius = 50;
+                linternaInterior = 50; 
+                linternaExterior = 220; 
+            } else {
+                player.radius = 20;
+                enemy.radius = 25;
+                linternaInterior = 30; 
+                linternaExterior = 140; 
+            }
+        }
+
+        window.addEventListener("resize", redimensionarCanvas);
+        redimensionarCanvas();
+
+        document.getElementById("btnEmpezar").addEventListener("click", () => {
+            pantallaInicio.style.display = "none";
+            juegoIniciado = true;
+            
+            // Inicializar Web Audio API al interactuar con el botón
+            if (!audioCtx) {
+                const AudioContext = window.AudioContext || window.webkitAudioContext;
+                audioCtx = new AudioContext();
+                gainNode = audioCtx.createGain();
+                gainNode.gain.value = 0; // Silencio inicial
+                gainNode.connect(audioCtx.destination);
+            }
+
+            if (!fuenteConectada) {
+                const track = audioCtx.createMediaElementSource(audioEnemigo);
+                track.connect(gainNode);
+                fuenteConectada = true;
+            }
+
+            if (audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+            
+            audioEnemigo.play().catch(e => console.log("Error de audio:", e));
+            
+            player.targetX = player.x;
+            player.targetY = player.y;
+        });
+
+        function setTarget(e) {
+            if (!partidaActiva || !juegoIniciado) return;
+            const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+            const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+            player.targetX = clientX;
+            player.targetY = clientY;
+        }
+
+        canvas.addEventListener("touchstart", setTarget);
+        canvas.addEventListener("touchmove", setTarget);
+        canvas.addEventListener("mousedown", setTarget);
+        canvas.addEventListener("mousemove", (e) => {
+            if(e.buttons === 1) setTarget(e);
+        });
+
+        const teclas = { w: false, a: false, s: false, d: false, ArrowUp: false, ArrowDown: false, ArrowLeft: false, ArrowRight: false };
+
+        window.addEventListener("keydown", (e) => {
+            if (teclas.hasOwnProperty(e.key) || teclas.hasOwnProperty(e.key.toLowerCase())) {
+                teclas[e.key.toLowerCase()] = true;
+                teclas[e.key] = true; 
+            }
+        });
+
+        window.addEventListener("keyup", (e) => {
+            if (teclas.hasOwnProperty(e.key) || teclas.hasOwnProperty(e.key.toLowerCase())) {
+                teclas[e.key.toLowerCase()] = false;
+                teclas[e.key] = false;
+            }
+        });
+
+        function generarPosicionAleatoria(margen) {
+            return {
+                x: Math.random() * (width - margen * 2) + margen,
+                y: Math.random() * (height - margen * 2) + margen
+            };
+        }
+
+        function spawnItem() {
+            const pos = generarPosicionAleatoria(30);
+            item.x = pos.x;
+            item.y = pos.y;
+        }
+
+        function distancia(x1, y1, x2, y2) {
+            return Math.hypot(x2 - x1, y2 - y1);
+        }
+
+        function moverHacia(objeto, targetX, targetY, velocidad) {
+            const dist = distancia(objeto.x, objeto.y, targetX, targetY);
+            if (dist > velocidad) {
+                objeto.x += (targetX - objeto.x) / dist * velocidad;
+                objeto.y += (targetY - objeto.y) / dist * velocidad;
+            } else {
+                objeto.x = targetX;
+                objeto.y = targetY;
+            }
+        }
+
+        function inicializar() {
+            player.x = width / 2;
+            player.y = height / 2;
+            player.targetX = player.x;
+            player.targetY = player.y;
+            
+            enemy.x = 50;
+            enemy.y = 50;
+            enemy.speed = enemy.baseSpeed;
+
+            spawnItem();
+        }
+
+        function actualizar() {
+            if (!partidaActiva || !juegoIniciado) return;
+
+            let usoTeclado = false;
+
+            if (teclas.w || teclas.ArrowUp) { player.y -= player.speed; usoTeclado = true; }
+            if (teclas.s || teclas.ArrowDown) { player.y += player.speed; usoTeclado = true; }
+            if (teclas.a || teclas.ArrowLeft) { player.x -= player.speed; usoTeclado = true; }
+            if (teclas.d || teclas.ArrowRight) { player.x += player.speed; usoTeclado = true; }
+
+            if (usoTeclado) {
+                player.targetX = player.x;
+                player.targetY = player.y;
+            } else {
+                moverHacia(player, player.targetX, player.targetY, player.speed);
+            }
+
+            player.x = Math.max(player.radius, Math.min(width - player.radius, player.x));
+            player.y = Math.max(player.radius, Math.min(height - player.radius, player.y));
+
+            moverHacia(enemy, player.x, player.y, enemy.speed);
+
+            // Ajuste dinámico de volumen con Web Audio API (Soporte real para móviles)
+            const distEnemigo = distancia(player.x, player.y, enemy.x, enemy.y);
+            const radioTerror = 450; 
+            let volumenActual = 1 - (distEnemigo / radioTerror);
+            
+            if (volumenActual < 0) volumenActual = 0;
+            if (volumenActual > 1) volumenActual = 1;
+            
+            if (gainNode) {
+                // Controlamos el amplificador en lugar de la etiqueta de audio
+                gainNode.gain.value = volumenActual;
+            }
+
+            if (distancia(player.x, player.y, item.x, item.y) < player.radius + item.radius) {
+                score++;
+                scoreElement.textContent = score;
+                
+                if (score >= 15) {
+                    partidaActiva = false;
+                    audioEnemigo.pause();
+                    gameWinScreen.style.display = "flex";
+                } else {
+                    enemy.speed += 0.17; 
+                    spawnItem();
+                }
+            }
+
+            if (distancia(player.x, player.y, enemy.x, enemy.y) < player.radius + enemy.radius - (player.radius * 0.4)) {
+                partidaActiva = false;
+                audioEnemigo.pause();
+                
+                audioSusto.currentTime = 0;
+                audioSusto.play().catch(e => console.log(e));
+                
+                gameOverScreen.style.display = "flex";
+            }
+        }
+
+        function dibujar() {
+            ctx.fillStyle = "#1a1a1a";
+            ctx.fillRect(0, 0, width, height);
+
+            if (imgEnemigo.complete && imgEnemigo.naturalHeight !== 0) {
+                ctx.beginPath();
+                ctx.arc(enemy.x, enemy.y, enemy.radius, 0, Math.PI * 2);
+                ctx.fillStyle = "#1a1a1a";
+                ctx.fill();
+                
+                ctx.drawImage(imgEnemigo, enemy.x - enemy.radius, enemy.y - enemy.radius, enemy.radius * 2, enemy.radius * 2);
+            } else {
+                ctx.beginPath();
+                ctx.arc(enemy.x, enemy.y, enemy.radius, 0, Math.PI * 2);
+                ctx.fillStyle = "#8B0000";
+                ctx.fill();
+            }
+
+            ctx.beginPath();
+            ctx.arc(item.x, item.y, item.radius, 0, Math.PI * 2);
+            ctx.fillStyle = "#00FFFF";
+            ctx.fill();
+
+            const gradiente = ctx.createRadialGradient(player.x, player.y, linternaInterior, player.x, player.y, linternaExterior);
+            gradiente.addColorStop(0, "rgba(0, 0, 0, 0)"); 
+            gradiente.addColorStop(1, "rgba(0, 0, 0, 1)"); 
+
+            ctx.fillStyle = gradiente;
+            ctx.fillRect(0, 0, width, height);
+
+            if (imgJugador.complete && imgJugador.naturalHeight !== 0) {
+                ctx.drawImage(imgJugador, player.x - player.radius, player.y - player.radius, player.radius * 2, player.radius * 2);
+            } else {
+                ctx.beginPath();
+                ctx.arc(player.x, player.y, player.radius, 0, Math.PI * 2);
+                ctx.fillStyle = "#FFFFFF";
+                ctx.fill();
+            }
+        }
+
+        function loop() {
+            if (juegoIniciado) {
+                actualizar();
+            }
+            dibujar();
+            
+            if (partidaActiva || !juegoIniciado) {
+                animationId = requestAnimationFrame(loop);
+            }
+        }
+
+        function reiniciarJuego() {
+            partidaActiva = true;
+            score = 0;
+            scoreElement.textContent = score;
+            gameOverScreen.style.display = "none";
+            gameWinScreen.style.display = "none";
+            
+            audioEnemigo.currentTime = 0;
+            audioEnemigo.play().catch(e => console.log(e));
+            
+            inicializar();
+            loop();
+        }
+
+        inicializar();
+        loop();
+    </script>
+</body>
+</html>
